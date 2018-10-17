@@ -38,7 +38,7 @@ def status(length, percent):
 if __name__ == "__main__":
 
   # Set global variables
-  flag_show_images = True
+  flag_show_images = False
   flag_show_debug_images = False
   flag_show_debug_messages = False
   bagpath = sys.argv[1]
@@ -63,8 +63,8 @@ if __name__ == "__main__":
         dist = np.array(msg.D)
         break
 
-  # mtx = np.array([[1129.304226458667, 0, 806.7047588819538], [0, 1156.177065442843, 1026.463080709087], [0, 0, 1]])
-  # dist = np.array([-0.2557570031014973, 0.04353270442408681, -0.001325026535914775, -0.0004043425940621058, 0])
+  mtx = np.array([[990.6089386924126, 0, 649.8683709187349], [0, 992.4546641961812, 493.67582459076], [0, 0, 1]])
+  dist = np.array([-0.331452753057412, 0.105959239301334, -0.0003981374517582984, -0.0002246535214772431, 0])
 
   # Create processing objects
   cfinder = CentroidFinder(flag_show_debug_images,flag_show_debug_messages)

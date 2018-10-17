@@ -111,7 +111,7 @@ class CentroidFinder(object):
     max_value = 255
     block_size = 5
     const = 1
-    threshold_value = 85
+    threshold_value = 10
     _,self._img = cv2.threshold(self._img,threshold_value,max_value,cv2.THRESH_BINARY)
 
     if self._show_images:
@@ -660,7 +660,7 @@ class PnPSolver(object):
       yawpitchroll = self._zyx2ypr(orientation)
 
       # Draw axes on image
-      axis_len = 0.6 # [m]
+      axis_len = 0.16 # [m]
       axis = np.float32([[axis_len,0,0], [0,axis_len,0], [0,0,axis_len]]).reshape(-1,3)
       imgpts,_ = cv2.projectPoints(axis,rvecs,tvecs,self._mtx,self._dist)
       self._img = draw_axes(self._img,feature_points,imgpts)
