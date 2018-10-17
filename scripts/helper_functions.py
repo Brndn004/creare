@@ -31,22 +31,7 @@ def convert_image(msg, flag = False):
   '''
   bridge = CvBridge()
   try:
-    # cv_bridge automatically scales, we need to remove that behavior
-    if bridge.encoding_to_dtype_with_channels(msg.encoding)[0] in ['uint16', 'int16']:
-      mono16 = bridge.imgmsg_to_cv2(msg, '16UC1')
-      mono8 = numpy.array(numpy.clip(mono16, 0, 255), dtype=numpy.uint8)
-      img = mono8
-    elif 'FC1' in msg.encoding:
-      # floating point image handling
-      img = bridge.imgmsg_to_cv2(msg, "passthrough")
-      _, max_val, _, _ = cv2.minMaxLoc(img)
-      if max_val > 0:
-        scale = 255.0 / max_val
-        img = (img * scale).astype(numpy.uint8)
-      else:
-        img = img.astype(numpy.uint8)
-    else:
-        img = bridge.imgmsg_to_cv2(msg, "mono8")
+    img = bridge.imgmsg_to_cv2(msg, '8UC1')
   except CvBridgeError as e:
     print text_colors.WARNING + 'Warning: Image converted unsuccessfully before processing.' + text_colors.ENDCOLOR
     raise e
@@ -126,7 +111,7 @@ class CentroidFinder(object):
     max_value = 255
     block_size = 5
     const = 1
-    threshold_value = 65
+    threshold_value = 85
     _,self._img = cv2.threshold(self._img,threshold_value,max_value,cv2.THRESH_BINARY)
 
     if self._show_images:
@@ -177,11 +162,10 @@ class CentroidFinder(object):
     return tuple(centroids)
 
 class NoiseFilter(object):
-  def __init__(self, show_images, flag_debug, rotate):
+  def __init__(self, show_images, flag_debug):
     self._show_images = show_images
     self._img = None
     self._debug = flag_debug
-    self._rotate = rotate
 
   def filter_noise(self, img, centroids):
     '''
@@ -209,11 +193,10 @@ class NoiseFilter(object):
         print text_colors.OKBLUE + "Note: First filter applied." + text_colors.ENDCOLOR
       centroids = self._first_round_centroid_filter(centroids)
 
-      # TODO: rewrite 2nd round filter to be camera orientation independent (i.e. if camera is mounted at 90 degrees, make 2nd round filter work still)
-      # if len(centroids) > 8:
-      #   if self._debug:
-      #     print text_colors.OKBLUE + "Note: Second filter applied." + text_colors.ENDCOLOR
-      #   centroids = self._second_round_centroid_filter(centroids)
+      if len(centroids) > 8:
+        if self._debug:
+          print text_colors.OKBLUE + "Note: Second filter applied." + text_colors.ENDCOLOR
+        centroids = self._second_round_centroid_filter(centroids)
 
     # The filters may have wiped out too many points. Check if that's the case.
     if len(centroids) < 8:
@@ -262,7 +245,7 @@ class NoiseFilter(object):
 
   def _zeroeth_round_centroid_filter(self,centroids):
     '''
-    Takes subsets of four and returns all centroids that have low residuals after a linear fit. 
+    Takes subsets of four and returns all centroids that have low residuals after a linear fit.
     '''
 
     orig_centroids = centroids
@@ -273,11 +256,8 @@ class NoiseFilter(object):
     for s in subsets:
       x = [p[0] for p in s]
       y = [p[1] for p in s]
-      if self._rotate:
-        _, residuals, _, _, _ = np.polyfit(y, x, 1, full = True)
-      else:
-        _, residuals, _, _, _ = np.polyfit(x, y, 1, full = True)
-      if residuals < 4:
+      _, residuals, _, _, _ = np.polyfit(x, y, 1, full = True)
+      if residuals < 1.5:
         rows.append(list(s))
 
     # Get all centroids that exist in a low-residual subset
@@ -476,7 +456,7 @@ class NoiseFilter(object):
     return tuple(points)
 
 class PnPSolver(object):
-  def __init__(self, mtx, dist, show_images, flag_debug, rotate):
+  def __init__(self, mtx, dist, show_images, flag_debug):
     self._show_images = show_images
     self._debug = flag_debug
     self._mtx = mtx
@@ -485,7 +465,6 @@ class PnPSolver(object):
     self._img = None
     self._rvecs = None
     self._tvecs = None
-    self._rotate = rotate
 
   def solve_pnp(self, img, centroids):
     '''
@@ -518,43 +497,30 @@ class PnPSolver(object):
     if len(centroids) >= 8:
       # Find rows based upon linear fit residuals
       subsets = combinations(centroids,4)
-      residual_list = []
+      rows = []
       for s in subsets:
-        x = [p[0] for p in s]
-        y = [p[1] for p in s]
-        if self._rotate:
-          _, residuals, _, _, _ = np.polyfit(y, x, 1, full = True)
-        else:
+        if len(rows) < 2:
+          x = [p[0] for p in s]
+          y = [p[1] for p in s]
           _, residuals, _, _, _ = np.polyfit(x, y, 1, full = True)
-        residual_list.append((residuals[0],list(s)))
+          if residuals < 1.5:
+            rows.append(list(s))
 
-      # Take the two subsets with lowest residual
-      residual_list.sort(key=lambda x: x[0])
-      rows = [residual_list[0][1], residual_list[1][1]]
+      # If we can't find both rows by linearity, return empty
+      if len(rows) < 2:
+        return [[0],[0]]
 
-      # Now we have both rows, so we must decide which is the top row and which is the bottom row. First, sort each row so that the points in each row are organized from right to left (if rotated, top to bottom) in the image.
-      if self._rotate:
-        for r in rows:
-          r.sort(key=lambda x: -x[1])
+     # Now we have both rows, so we must decide which is the top row and which is the bottom row. First, sort each row so that the points in each row are organized from right to left in the image.
+      for r in rows:
+        r.sort(key=lambda x: x[0])
+
+      # Then, use the first element of each row to determine which row is on top
+      if rows[0][0][1] < rows[1][0][1]:
+        top_row    = rows[0]
+        bottom_row = rows[1]
       else:
-        for r in rows:
-          r.sort(key=lambda x: x[0])
-
-      # Then, use the first element of each row to determine which row is on top (if rotated determine which row is on the left)
-      if self._rotate:
-        if rows[0][0][0] < rows[1][0][0]:
-          top_row    = rows[0]
-          bottom_row = rows[1]
-        else:
-          top_row    = rows[1]
-          bottom_row = rows[0]
-      else:
-        if rows[0][0][1] < rows[1][0][1]:
-          top_row    = rows[0]
-          bottom_row = rows[1]
-        else:
-          top_row    = rows[1]
-          bottom_row = rows[0]
+        top_row    = rows[1]
+        bottom_row = rows[0]
 
       top_row = tuple([tuple(c) for c in top_row])
       bottom_row = tuple([tuple(c) for c in bottom_row])
@@ -694,7 +660,7 @@ class PnPSolver(object):
       yawpitchroll = self._zyx2ypr(orientation)
 
       # Draw axes on image
-      axis_len = 0.16 # [m]
+      axis_len = 0.6 # [m]
       axis = np.float32([[axis_len,0,0], [0,axis_len,0], [0,0,axis_len]]).reshape(-1,3)
       imgpts,_ = cv2.projectPoints(axis,rvecs,tvecs,self._mtx,self._dist)
       self._img = draw_axes(self._img,feature_points,imgpts)
